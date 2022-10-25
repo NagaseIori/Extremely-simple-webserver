@@ -121,9 +121,19 @@ string http_responde_client(HttpRequest request) {
 		path = wconfig.rootPath + path;
 		cout << "Request file at path: " << path << std::endl;
 		std::ifstream f(path, std::ios::binary);
-		if (!f.good())
-			return http_response(404, "");
+		if (!f.good()) {
+			std::ifstream ff(wconfig.rootPath + "/404.html", std::ios::binary);
+			if (ff.good()) {
+				ff.read(rdBuf, READ_BUFFER_SIZE);
+				ff.close();
+				return http_response(404, rdBuf, ff.gcount(), ".html");
+			}
+			else
+				return http_response(404, "");
+		}
+			
 		f.read(rdBuf, READ_BUFFER_SIZE);
+		f.close();
 		return http_response(200, rdBuf, f.gcount(), http_get_file_type(path));
 	}
 }
@@ -135,13 +145,8 @@ int main() {
 
 
 	WSADATA wsaData;
-	/*
-		select()机制中提供的fd_set的数据结构，实际上是long类型的数组，
-		每一个数组元素都能与一打开的文件句柄（不管是socket句柄，还是其他文件或命名管道或设备句柄）建立联系，建立联系的工作由程序员完成.
-		当调用select()时，由内核根据IO状态修改fd_set的内容，由此来通知执行了select()的进程哪个socket或文件句柄发生了可读或可写事件。
-	*/
-	fd_set rfds;				//用于检查socket是否有数据到来的的文件描述符，用于socket非阻塞模式下等待网络事件通知（有数据到来）
-	fd_set wfds;				//用于检查socket是否可以发送的文件描述符，用于socket非阻塞模式下等待网络事件通知（可以发送数据）
+	fd_set rfds;
+	fd_set wfds;
 	bool first_connetion = true;
 
 	int nRc = WSAStartup(0x0202, &wsaData);
@@ -161,29 +166,22 @@ int main() {
 
 	sockaddr_in addr, clientAddr;
 
-	//SOCKET sessionSocket = INVALID_SOCKET;
 	vector<SOCKET> sessionSockets;
 
 	int addrLen;
 
-	//创建监听socket
 	srvSocket = socket(AF_INET, SOCK_STREAM, 0);
 	if (srvSocket != INVALID_SOCKET)
 		printf("Socket create Ok!\n");
 
-
-	//设置服务器的端口和地址
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(wconfig.port);
-	addr.sin_addr.S_un.S_addr = htonl(INADDR_ANY); //主机上任意一块网卡的IP地址
+	addr.sin_addr.S_un.S_addr = htonl(INADDR_ANY);
 
-
-	//binding
 	int rtn = bind(srvSocket, (LPSOCKADDR)&addr, sizeof(addr));
 	if (rtn != SOCKET_ERROR)
 		printf("Socket bind Ok!\n");
 
-	//监听
 	rtn = listen(srvSocket, 5);
 	if (rtn != SOCKET_ERROR)
 		printf("Socket listen Ok!\n");
@@ -191,13 +189,11 @@ int main() {
 	clientAddr.sin_family = AF_INET;
 	addrLen = sizeof(clientAddr);
 
-	//设置接收缓冲区
 	char recvBuf[4096];
 
-	u_long blockMode = 1;//将srvSock设为非阻塞模式以监听客户连接请求
+	u_long blockMode = 1;
 
-	//调用ioctlsocket，将srvSocket改为非阻塞模式，改成反复检查fd_set元素的状态，看每个元素对应的句柄是否可读或可写
-	if ((rtn = ioctlsocket(srvSocket, FIONBIO, &blockMode) == SOCKET_ERROR)) { //FIONBIO：允许或禁止套接口s的非阻塞模式。
+	if ((rtn = ioctlsocket(srvSocket, FIONBIO, &blockMode) == SOCKET_ERROR)) {
 		cout << "ioctlsocket() failed with error!\n";
 		return 0;
 	}
@@ -213,7 +209,7 @@ int main() {
 
 		FD_SET(srvSocket, &rfds);
 
-		for(auto sock:sessionSockets) { //如果sessionSocket是有效的
+		for(auto sock:sessionSockets) {
 			FD_SET(sock, &rfds);
 			FD_SET(sock, &wfds);
 		}
@@ -226,7 +222,7 @@ int main() {
 			if (sessionSocket != INVALID_SOCKET)
 				printf("Socket listen one client request!\n");
 
-			if ((rtn = ioctlsocket(sessionSocket, FIONBIO, &blockMode) == SOCKET_ERROR)) { //FIONBIO：允许或禁止套接口s的非阻塞模式。
+			if ((rtn = ioctlsocket(sessionSocket, FIONBIO, &blockMode) == SOCKET_ERROR)) {
 				cout << "ioctlsocket() failed with error!\n";
 				return 0;
 			}
