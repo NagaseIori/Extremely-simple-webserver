@@ -3,14 +3,19 @@
 #include <stdio.h>
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include "json.hpp"
 #include <string>
 #include <map>
+#include <filesystem>
+#include <vector>
 using std::cout;
+using std::vector;
 using std::string;
 using std::map;
 using json = nlohmann::json;
 using std::to_string;
+namespace fs = std::filesystem;
 
 #pragma comment(lib,"ws2_32.lib")
 
@@ -36,8 +41,30 @@ WebConfig config_load() {
 
 	return json::parse(f).get<WebConfig>();
 }
+WebConfig wconfig;
 
-string http_response(int status, const char * content, int size = -1) {
+map<string, string> fileToType;
+
+void http_init() {
+	fileToType[".jpg"] = "image/jpeg";
+	fileToType[".png"] = "image/png";
+	fileToType[".gif"] = "image/gif";
+	fileToType[".css"] = "text/css";
+	fileToType[".html"] = "text/html";
+	fileToType[".js"] = "application/x-javascript";
+}
+
+string http_get_file_type(string file) {
+	fs::path fp = file;
+	string ext = fp.extension().string();
+	cout << "EXTENSION: " << ext << std::endl;
+	if (fileToType.count(ext) > 0)
+		return fileToType[ext];
+	else
+		return "application/octet-stream";
+}
+
+string http_response(int status, const char * content, int size = -1, string type = "null") {
 	string result;
 	string name;
 	switch (status) {
@@ -51,17 +78,60 @@ string http_response(int status, const char * content, int size = -1) {
 		name = "Forbidden";
 		break;
 	}
+	size = size == -1 ? strlen(content) : size;
 	result = string("HTTP/1.1 ") + to_string(status) + " " + name + "\n";
-	result += "Content-Type: text/html; charset=UTF-8\n";
-	result += "Content-Length: " + to_string(size == -1 ? strlen(content) : size) + "\n";
+	if(type != "null")
+		result += string("Content-Type: ") + type + "; charset=UTF-8\n";
+	result += "Content-Length: " + to_string(size) + "\n";
 	result += "\n";
-	result += content;
+	cout << "Responde header:\n" << result << std::endl;
+	result.append(content, size);
 	return result;
+}
+
+struct HttpRequest {
+	string type;
+	string path;
+	bool is_request = false;
+};
+
+HttpRequest http_request_parse(string content) {
+	std::istringstream ss(content);
+	string line;
+	HttpRequest result;
+	while (std::getline(ss, line)) {
+		if (line.find("GET") != string::npos) {
+			std::istringstream lss(line);
+			lss >> result.type >> result.path;
+			result.is_request = true;
+		}
+	}
+	return result;
+}
+
+const int READ_BUFFER_SIZE = 25 * 1024 * 1024;
+char rdBuf[READ_BUFFER_SIZE];
+string http_responde_client(HttpRequest request) {
+	if (request.type == "GET") {
+		string path = request.path;
+		if (path[path.size() - 1] == '/') {
+			path += "index.html";
+		}
+		
+		path = wconfig.rootPath + path;
+		cout << "Request file at path: " << path << std::endl;
+		std::ifstream f(path, std::ios::binary);
+		if (!f.good())
+			return http_response(404, "");
+		f.read(rdBuf, READ_BUFFER_SIZE);
+		return http_response(200, rdBuf, f.gcount(), http_get_file_type(path));
+	}
 }
 
 int main() {
 	// Init
-	WebConfig config = config_load();
+	http_init();
+	wconfig = config_load();
 
 
 	WSADATA wsaData;
@@ -91,7 +161,8 @@ int main() {
 
 	sockaddr_in addr, clientAddr;
 
-	SOCKET sessionSocket = INVALID_SOCKET;
+	//SOCKET sessionSocket = INVALID_SOCKET;
+	vector<SOCKET> sessionSockets;
 
 	int addrLen;
 
@@ -103,7 +174,7 @@ int main() {
 
 	//设置服务器的端口和地址
 	addr.sin_family = AF_INET;
-	addr.sin_port = htons(config.port);
+	addr.sin_port = htons(wconfig.port);
 	addr.sin_addr.S_un.S_addr = htonl(INADDR_ANY); //主机上任意一块网卡的IP地址
 
 
@@ -142,19 +213,16 @@ int main() {
 
 		FD_SET(srvSocket, &rfds);
 
-		if (!first_connetion) {
-			if (sessionSocket != INVALID_SOCKET) { //如果sessionSocket是有效的
-				FD_SET(sessionSocket, &rfds);
-				FD_SET(sessionSocket, &wfds);
-			}
-
+		for(auto sock:sessionSockets) { //如果sessionSocket是有效的
+			FD_SET(sock, &rfds);
+			FD_SET(sock, &wfds);
 		}
 
 		select(0, &rfds, &wfds, NULL, NULL);
 
 		if (FD_ISSET(srvSocket, &rfds)) {
 
-			sessionSocket = accept(srvSocket, (LPSOCKADDR)&clientAddr, &addrLen);
+			SOCKET sessionSocket = accept(srvSocket, (LPSOCKADDR)&clientAddr, &addrLen);
 			if (sessionSocket != INVALID_SOCKET)
 				printf("Socket listen one client request!\n");
 
@@ -164,35 +232,52 @@ int main() {
 			}
 			cout << "ioctlsocket() for session socket ok!	Waiting for client connection and data\n";
 
-			first_connetion = false;
+			sessionSockets.push_back(sessionSocket);
 
 		}
 
-		if (FD_ISSET(sessionSocket, &rfds)) {
-			//receiving data from client
-			memset(recvBuf, '\0', 4096);
-			rtn = recv(sessionSocket, recvBuf, 256, 0);
-			if (rtn > 0) {
-				printf("Received %d bytes from client: %s\n", rtn, recvBuf);
-				is_responding = true;
+		for (auto& sessionSocket : sessionSockets) {
+			if (FD_ISSET(sessionSocket, &rfds)) {
+				//receiving data from client
+				memset(recvBuf, '\0', 4096);
+				rtn = recv(sessionSocket, recvBuf, 4096, 0);
+				if (rtn > 0) {
+					printf("Received %d bytes from client: %s\n", rtn, recvBuf);
+
+					// Trying parse the data
+					HttpRequest request = http_request_parse(recvBuf);
+					if (!request.is_request) {
+						puts("Not a http request.");
+					}
+					else {
+						cout << "Getting a request.\nType: " << request.type << std::endl << "Path: " << request.path << std::endl;
+
+						// Dealing with the request.
+
+						is_responding = true;
+						responde_content = http_responde_client(request);
+					}
+				}
+				else { // If client is leaving
+					printf("Client leaving ...\n");
+					closesocket(sessionSocket);
+					sessionSocket = INVALID_SOCKET;
+				}
 			}
-			else { // If client is leaving
-				printf("Client leaving ...\n");
-				closesocket(sessionSocket);
-				sessionSocket = INVALID_SOCKET;
+
+			if (is_responding && FD_ISSET(sessionSocket, &wfds)) {
+				is_responding = false;
+
+				string& content = responde_content;
+
+				//cout << "Responding:\n" << content << std::endl;
+
+				int bytes = send(sessionSocket, content.c_str(), content.size(), 0);
+				cout << "Sending " << to_string(bytes) << " bytes." << std::endl;
 			}
 		}
-
-		if (is_responding && FD_ISSET(sessionSocket, &wfds)) {
-			is_responding = false;
-
-			string &content = responde_content;
-
-			cout << "Responding:\n" << content << std::endl;
-
-			int bytes = send(sessionSocket, content.c_str(), content.size(), 0);
-			cout << "Sending " << to_string(bytes) << " bytes." << std::endl;
-		}
+		
+		sessionSockets.erase(std::remove(sessionSockets.begin(), sessionSockets.end(), INVALID_SOCKET), sessionSockets.end());
 	}
 
 }
