@@ -117,6 +117,9 @@ string http_responde_client(HttpRequest request) {
 		if (path[path.size() - 1] == '/') {
 			path += "index.html";
 		}
+		else if (!fs::path(path).has_extension()) {
+			path += "/index.html";
+		}
 		
 		path = wconfig.rootPath + path;
 		cout << "Request file at path: " << path << std::endl;
@@ -185,7 +188,6 @@ int main() {
 
 	sockaddr_in addr, clientAddr;
 
-	//vector<SOCKET> sessionSockets;
 	vector<Session> sessions;
 
 	int addrLen;
