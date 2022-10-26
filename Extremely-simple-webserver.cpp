@@ -138,6 +138,25 @@ string http_responde_client(HttpRequest request) {
 	}
 }
 
+struct Session {
+	SOCKET socket;
+	bool is_responding = false;
+	string response = "";
+
+	void responde_request(string res) {
+		is_responding = true;
+		response = res;
+	}
+
+	Session(SOCKET sock) {
+		socket = sock;
+	}
+
+	bool operator == (const SOCKET& sock) {
+		return socket == sock;
+	}
+};
+
 int main() {
 	// Init
 	http_init();
@@ -166,7 +185,8 @@ int main() {
 
 	sockaddr_in addr, clientAddr;
 
-	vector<SOCKET> sessionSockets;
+	//vector<SOCKET> sessionSockets;
+	vector<Session> sessions;
 
 	int addrLen;
 
@@ -209,9 +229,9 @@ int main() {
 
 		FD_SET(srvSocket, &rfds);
 
-		for(auto sock:sessionSockets) {
-			FD_SET(sock, &rfds);
-			FD_SET(sock, &wfds);
+		for(auto ses:sessions) {
+			FD_SET(ses.socket, &rfds);
+			FD_SET(ses.socket, &wfds);
 		}
 
 		select(0, &rfds, &wfds, NULL, NULL);
@@ -228,11 +248,12 @@ int main() {
 			}
 			cout << "ioctlsocket() for session socket ok!	Waiting for client connection and data\n";
 
-			sessionSockets.push_back(sessionSocket);
+			sessions.push_back(sessionSocket);
 
 		}
 
-		for (auto& sessionSocket : sessionSockets) {
+		for (auto& ses:sessions) {
+			auto& sessionSocket = ses.socket;
 			if (FD_ISSET(sessionSocket, &rfds)) {
 				//receiving data from client
 				memset(recvBuf, '\0', 4096);
@@ -250,8 +271,7 @@ int main() {
 
 						// Dealing with the request.
 
-						is_responding = true;
-						responde_content = http_responde_client(request);
+						ses.responde_request(http_responde_client(request));
 					}
 				}
 				else { // If client is leaving
@@ -261,10 +281,10 @@ int main() {
 				}
 			}
 
-			if (is_responding && FD_ISSET(sessionSocket, &wfds)) {
-				is_responding = false;
+			if (ses.is_responding && FD_ISSET(sessionSocket, &wfds)) {
+				ses.is_responding = false;
 
-				string& content = responde_content;
+				string& content = ses.response;
 
 				//cout << "Responding:\n" << content << std::endl;
 
@@ -273,7 +293,7 @@ int main() {
 			}
 		}
 		
-		sessionSockets.erase(std::remove(sessionSockets.begin(), sessionSockets.end(), INVALID_SOCKET), sessionSockets.end());
+		sessions.erase(std::remove(sessions.begin(), sessions.end(), INVALID_SOCKET), sessions.end());
 	}
 
 }
