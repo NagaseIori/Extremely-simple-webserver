@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <vector>
 #include "termcolor.hpp"
+#include "ws2tcpip.h"
 using std::cout;
 using std::vector;
 using std::string;
@@ -25,10 +26,15 @@ namespace wc {
 	struct WebConfig {
 		int port;
 		string rootPath;
+		unsigned int IP;
 	};
 	void from_json(const json& j, WebConfig& w) {
 		j.at("port").get_to(w.port);
 		j.at("rootPath").get_to(w.rootPath);
+		string IPs;
+		j.at("ip").get_to(IPs);
+
+		inet_pton(AF_INET, IPs.c_str(), &w.IP);
 	}
 }
 using namespace wc;
@@ -78,6 +84,9 @@ string http_response(int status, const char * content, int size = -1, string typ
 		break;
 	case 403:
 		name = "Forbidden";
+		break;
+	case 400:
+		name = "Bad Request";
 		break;
 	}
 	size = size == -1 ? strlen(content) : size;
@@ -202,7 +211,7 @@ int main() {
 
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(wconfig.port);
-	addr.sin_addr.S_un.S_addr = htonl(INADDR_ANY);
+	addr.sin_addr.S_un.S_addr = htonl(wconfig.IP);
 
 	int rtn = bind(srvSocket, (LPSOCKADDR)&addr, sizeof(addr));
 	if (rtn != SOCKET_ERROR)
@@ -272,6 +281,8 @@ int main() {
 					if (!request.is_request) {
 						//puts("Not a http request.");
 						cout << termcolor::red << "Not a http request.\n" << termcolor::reset;
+
+						ses.responde_request(http_response(400, ""));
 					}
 					else {
 						cout << "Getting a request.\nType: " << request.type << std::endl << "Path: " << request.path << std::endl;
