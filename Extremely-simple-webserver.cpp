@@ -9,10 +9,12 @@
 #include <map>
 #include <filesystem>
 #include <vector>
+#include "termcolor.hpp"
 using std::cout;
 using std::vector;
 using std::string;
 using std::map;
+using std::endl;
 using json = nlohmann::json;
 using std::to_string;
 namespace fs = std::filesystem;
@@ -84,7 +86,8 @@ string http_response(int status, const char * content, int size = -1, string typ
 		result += string("Content-Type: ") + type + "; charset=UTF-8\n";
 	result += "Content-Length: " + to_string(size) + "\n";
 	result += "\n";
-	cout << "Responde header:\n" << result << std::endl;
+	cout << std::endl;
+	//cout << "Responde header:\n" << result << std::endl;
 	result.append(content, size);
 	return result;
 }
@@ -125,6 +128,7 @@ string http_responde_client(HttpRequest request) {
 		cout << "Request file at path: " << path << std::endl;
 		std::ifstream f(path, std::ios::binary);
 		if (!f.good()) {
+			cout << termcolor::red << "File not found. Redirecting to 404 page..." << termcolor::reset << std::endl;
 			std::ifstream ff(wconfig.rootPath + "/404.html", std::ios::binary);
 			if (ff.good()) {
 				ff.read(rdBuf, READ_BUFFER_SIZE);
@@ -261,12 +265,13 @@ int main() {
 				memset(recvBuf, '\0', 4096);
 				rtn = recv(sessionSocket, recvBuf, 4096, 0);
 				if (rtn > 0) {
-					printf("Received %d bytes from client: %s\n", rtn, recvBuf);
+					printf("Received %d bytes from client.\n", rtn);
 
 					// Trying parse the data
 					HttpRequest request = http_request_parse(recvBuf);
 					if (!request.is_request) {
-						puts("Not a http request.");
+						//puts("Not a http request.");
+						cout << termcolor::red << "Not a http request.\n" << termcolor::reset;
 					}
 					else {
 						cout << "Getting a request.\nType: " << request.type << std::endl << "Path: " << request.path << std::endl;
@@ -277,7 +282,7 @@ int main() {
 					}
 				}
 				else { // If client is leaving
-					printf("Client leaving ...\n");
+					cout << termcolor::green << "Client leaving." << termcolor::reset << std::endl;
 					closesocket(sessionSocket);
 					sessionSocket = INVALID_SOCKET;
 				}

@@ -133,6 +133,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="C:\Users\Sino_E\source\repos\DyCore\json.hpp" />
+    <ClInclude Include="termcolor.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="config.json" />
